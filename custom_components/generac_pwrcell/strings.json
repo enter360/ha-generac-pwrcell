@@ -2,38 +2,26 @@
   "config": {
     "step": {
       "user": {
-        "title": "Generac PWRcell — Choose authentication method",
-        "description": "How would you like to connect to the Generac cloud API?",
-        "data": {
-          "auth_method": "Authentication method"
-        }
-      },
-      "password": {
         "title": "Generac PWRcell — Account login",
-        "description": "Enter your Generac / PWRview account credentials.\n\n**client_id** — This is embedded in the Generac PWRcell mobile app. Intercept one login request from the app with a proxy (e.g. mitmproxy or Charles) to find it. See the README for exact steps.",
+        "description": "Enter your Generac / PWRview account credentials (same as the PWRcell mobile app).",
         "data": {
-          "username": "Email address",
+          "email": "Email address",
           "password": "Password",
-          "client_id": "Client ID (from mobile app)"
-        }
-      },
-      "api_credentials": {
-        "title": "Generac PWRcell — API credentials",
-        "description": "Register a developer application at [mypwrview.generac.com]({register_url}) to get your client_id and client_secret.",
-        "data": {
-          "client_id": "Client ID",
-          "client_secret": "Client Secret"
+          "api_base": "API base URL (advanced)"
+        },
+        "data_description": {
+          "api_base": "Leave as default unless you are running a local mock server for testing."
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid credentials — check your email, password, or client_id.",
-      "cannot_connect": "Cannot reach the Generac API. Check your internet connection.",
+      "invalid_auth": "Invalid credentials — check your email and password.",
+      "cannot_connect": "Cannot reach the Generac API. Check your internet connection or API base URL.",
       "no_sensors": "Authenticated successfully, but no sensors were found on this account.",
       "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
     "abort": {
-      "already_configured": "This PWRcell sensor is already configured."
+      "already_configured": "This PWRcell account is already configured."
     }
   }
 }

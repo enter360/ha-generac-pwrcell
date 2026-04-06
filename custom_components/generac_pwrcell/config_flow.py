@@ -16,7 +16,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .auth import AuthError, GeneracAuth
-from .const import CONF_USER_ID, DOMAIN, MANUFACTURER
+from .const import CONF_API_BASE, CONF_USER_ID, DEFAULT_API_BASE, DOMAIN, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +29,9 @@ _SCHEMA = vol.Schema(
             TextSelectorConfig(
                 type=TextSelectorType.PASSWORD, autocomplete="current-password"
             )
+        ),
+        vol.Optional(CONF_API_BASE, default=DEFAULT_API_BASE): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.URL)
         ),
     }
 )
@@ -48,9 +51,13 @@ class GeneracPWRcellConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             email = user_input[CONF_EMAIL]
             password = user_input[CONF_PASSWORD]
 
+            api_base = user_input.get(CONF_API_BASE, DEFAULT_API_BASE) or DEFAULT_API_BASE
+
             try:
                 session = aiohttp_client.async_get_clientsession(self.hass)
-                user_id = await GeneracAuth.async_validate(session, email, password)
+                user_id = await GeneracAuth.async_validate(
+                    session, email, password, api_base=api_base
+                )
             except AuthError as exc:
                 _LOGGER.warning("Generac auth failed: %s", exc)
                 errors["base"] = _classify_error(str(exc))
@@ -66,6 +73,7 @@ class GeneracPWRcellConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_EMAIL: email,
                         CONF_PASSWORD: password,
                         CONF_USER_ID: user_id,
+                        CONF_API_BASE: api_base,
                     },
                 )
 

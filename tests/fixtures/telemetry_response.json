@@ -1,0 +1,42 @@
+[
+  {
+    "date": "1704067140",
+    "solar": {"powerKw": 3.1},
+    "grid": {"powerKw": -1.2},
+    "consumption": {"powerKw": 2.6},
+    "generator": {"powerKw": 0.0},
+    "battery": {
+      "powerKw": 0.7,
+      "soC": 82.0,
+      "batteryBackupTimeInSeconds": 14400,
+      "batteryState": "BATTERY_SOC_STATUS_NOMINAL"
+    },
+    "system": {
+      "SYS-001": {
+        "gridState": "GRID_CONNECTED",
+        "sysMode": "SELF_SUPPLY",
+        "inverterHeadRoomKw": 1.5
+      }
+    }
+  },
+  {
+    "date": "1704067200",
+    "solar": {"powerKw": 4.3},
+    "grid": {"powerKw": -1.5},
+    "consumption": {"powerKw": 2.8},
+    "generator": {"powerKw": 0.0},
+    "battery": {
+      "powerKw": 0.5,
+      "soC": 85.0,
+      "batteryBackupTimeInSeconds": 15000,
+      "batteryState": "BATTERY_SOC_STATUS_NOMINAL"
+    },
+    "system": {
+      "SYS-001": {
+        "gridState": "GRID_CONNECTED",
+        "sysMode": "SELF_SUPPLY",
+        "inverterHeadRoomKw": 1.2
+      }
+    }
+  }
+]
