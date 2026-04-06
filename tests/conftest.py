@@ -6,6 +6,7 @@ component modules can be imported during tests without HA installed.
 """
 from __future__ import annotations
 
+import enum as _enum
 import json
 import os
 import sys
@@ -136,6 +137,14 @@ class _CoordinatorEntity:
         pass
 
 
+class _EntityCategory(_enum.Enum):
+    DIAGNOSTIC = "diagnostic"
+    CONFIG = "config"
+
+_ha_entity_mod = MagicMock()
+_ha_entity_mod.EntityCategory = _EntityCategory
+
+
 @dataclasses.dataclass(frozen=True)
 class _SensorEntityDescription:
     """Frozen dataclass base matching the HA SensorEntityDescription fields used here."""
@@ -150,6 +159,8 @@ class _SensorEntityDescription:
     # data_key with a default so Python 3.9 ordering rules are satisfied;
     # the compat shim also injects None on the child class for the same reason.
     data_key: str = ""
+    suggested_unit_of_measurement: str | None = None
+    entity_category: object = None
 
 
 _sensor_mod = MagicMock()
@@ -173,6 +184,7 @@ _stubs: dict = {
     "homeassistant.helpers.selector": MagicMock(),
     "homeassistant.helpers.device_registry": MagicMock(),
     "homeassistant.helpers.entity_platform": MagicMock(),
+    "homeassistant.helpers.entity": _ha_entity_mod,
     "homeassistant.components": MagicMock(),
     "homeassistant.components.sensor": _sensor_mod,
     "homeassistant.config_entries": MagicMock(),
