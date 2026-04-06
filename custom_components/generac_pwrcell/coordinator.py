@@ -26,11 +26,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .auth import AuthError, GeneracAuth
 from .const import (
+    DEFAULT_API_BASE,
     DEVICE_TYPE_BATTERY,
     DEVICE_TYPE_INVERTER,
     DEVICE_TYPE_PVL,
     DOMAIN,
-    HOMES_URL,
     SCAN_INTERVAL_SECONDS,
     SENSOR_BATTERY_BACKUP_SECS,
     SENSOR_BATTERY_ENERGY,
@@ -55,7 +55,6 @@ from .const import (
     SENSOR_SOLAR_ENERGY,
     SENSOR_SOLAR_POWER,
     SENSOR_SYSTEM_MODE,
-    TELEMETRY_URL_TEMPLATE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,6 +71,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         auth: GeneracAuth,
         user_id: str,
         home_id: str | None = None,
+        api_base: str = DEFAULT_API_BASE,
     ) -> None:
         super().__init__(
             hass,
@@ -82,6 +82,10 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         self.auth = auth
         self.user_id = user_id
         self._home_id: str | None = home_id
+
+        # Build data URLs from api_base so a local mock server can be used.
+        self._homes_url = f"{api_base}/live/v1/homes"
+        self._telemetry_url_template = f"{api_base}/live/v2/homes/{{home_id}}/telemetry"
 
         # Expose home metadata for device registry
         self.home_address: str = ""
@@ -95,7 +99,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch homes data and optional telemetry; return merged sensor values."""
         try:
-            homes_raw = await self.auth.async_get(HOMES_URL, use_id_token=True)
+            homes_raw = await self.auth.async_get(self._homes_url, use_id_token=True)
         except AuthError as exc:
             raise UpdateFailed(f"Generac PWRcell homes fetch failed: {exc}") from exc
 
@@ -125,7 +129,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         return result
 
     async def _async_fetch_telemetry(self) -> Any:
-        url = TELEMETRY_URL_TEMPLATE.format(home_id=self._home_id)
+        url = self._telemetry_url_template.format(home_id=self._home_id)
         from_iso = (
             datetime.now(timezone.utc) - timedelta(seconds=_TELEMETRY_LOOKBACK_SECONDS)
         ).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -1,0 +1,53 @@
+[
+  {
+    "homeId": "home-abc123",
+    "address1": "123 Main St",
+    "city": "Springfield",
+    "state": "IL",
+    "timezone": "America/Chicago",
+    "systems": [
+      {
+        "serialNumber": "SYS-001",
+        "systemDevices": [
+          {
+            "deviceType": "PVL",
+            "deviceStatus": {
+              "powerInWatts": 2500.0,
+              "lifeTimeEnergyInWh": 12000000.0
+            }
+          },
+          {
+            "deviceType": "PVL",
+            "deviceStatus": {
+              "powerInWatts": 1800.0,
+              "lifeTimeEnergyInWh": 9500000.0
+            }
+          },
+          {
+            "deviceType": "BATTERY",
+            "deviceStatus": {
+              "powerInWatts": -500.0,
+              "soc": 85.0,
+              "lifeTimeEnergyInWh": 5000000.0,
+              "temperatureInCelsius": 25.0,
+              "voltage": 48.0
+            }
+          },
+          {
+            "deviceType": "INVERTER",
+            "deviceStatus": {
+              "powerInWatts": 3800.0,
+              "lifeTimeEnergyInWh": 18000000.0,
+              "temperatureInCelsius": 35.0,
+              "voltage": 240.0
+            }
+          },
+          {
+            "deviceType": "BEACON",
+            "deviceStatus": {}
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -40,14 +40,12 @@ from typing import Any
 import aiohttp
 
 from .const import (
-    API_BASE,
     APP_BUILD,
     APP_CLIENT_ID,
     APP_CLIENT_SECRET,
     APP_USER_AGENT,
     APP_VERSION,
-    SIGNIN_URL,
-    TOKEN_REFRESH_URL,
+    DEFAULT_API_BASE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,10 +86,15 @@ class GeneracAuth:
         session: aiohttp.ClientSession,
         email: str,
         password: str,
+        api_base: str = DEFAULT_API_BASE,
     ) -> None:
         self._session = session
         self._email = email
         self._password = password
+
+        # Derive auth URLs from api_base so a local mock server can be used.
+        self._signin_url = f"{api_base}/sessions/v1/signin"
+        self._refresh_url = f"{api_base}/sessions/v2/refresh/token"
 
         self._access_token: str | None = None
         self._id_token: str | None = None        # used by data API endpoints
@@ -164,7 +167,7 @@ class GeneracAuth:
 
         try:
             async with self._session.post(
-                SIGNIN_URL, headers=headers, json=payload
+                self._signin_url, headers=headers, json=payload
             ) as resp:
                 body = await resp.json(content_type=None)
                 if resp.status != 200:
@@ -194,7 +197,7 @@ class GeneracAuth:
 
         try:
             async with self._session.post(
-                TOKEN_REFRESH_URL, headers=headers, json=payload
+                self._refresh_url, headers=headers, json=payload
             ) as resp:
                 body = await resp.json(content_type=None)
                 if resp.status != 200:
@@ -273,9 +276,10 @@ class GeneracAuth:
         session: aiohttp.ClientSession,
         email: str,
         password: str,
+        api_base: str = DEFAULT_API_BASE,
     ) -> str:
         """Sign in and return user_id. Raises AuthError on failure."""
-        auth = cls(session, email, password)
+        auth = cls(session, email, password, api_base=api_base)
         await auth._async_signin()
         if not auth.user_id:
             raise AuthError("Sign-in succeeded but no user_id returned.")

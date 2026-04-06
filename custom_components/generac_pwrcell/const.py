@@ -14,25 +14,30 @@ APP_BUILD         = "38904"
 APP_USER_AGENT    = f"GeneracHome/{APP_BUILD} CFNetwork/3860.400.51 Darwin/25.3.0"
 
 # ── API base ───────────────────────────────────────────────────────────────────
-API_BASE = "https://generac-api.neur.io"
+DEFAULT_API_BASE = "https://generac-api.neur.io"
+
+# Kept for backwards-compat; production callers should use DEFAULT_API_BASE.
+API_BASE = DEFAULT_API_BASE
 
 # Auth  (discovered from app traffic intercept)
-SIGNIN_URL         = f"{API_BASE}/sessions/v1/signin"
-TOKEN_REFRESH_URL  = f"{API_BASE}/sessions/v2/refresh/token"
+SIGNIN_URL         = f"{DEFAULT_API_BASE}/sessions/v1/signin"
+TOKEN_REFRESH_URL  = f"{DEFAULT_API_BASE}/sessions/v2/refresh/token"
 
 # Homes endpoint — confirmed schema from live API capture
 # Returns: list of home objects with nested systems → systemDevices
 # Auth:    Bearer <id_token>
-HOMES_URL = f"{API_BASE}/live/v1/homes"
+HOMES_URL = f"{DEFAULT_API_BASE}/live/v1/homes"
 
 # Telemetry endpoint — confirmed URL, schema TBC (awaiting response capture)
 # Auth:    Bearer <id_token>
 # Param:   fromIso=<ISO8601 timestamp>
-TELEMETRY_URL_TEMPLATE = f"{API_BASE}/live/v2/homes/{{home_id}}/telemetry"
+TELEMETRY_URL_TEMPLATE = f"{DEFAULT_API_BASE}/live/v2/homes/{{home_id}}/telemetry"
 
 # ── Config entry keys ──────────────────────────────────────────────────────────
 CONF_USER_ID = "user_id"
 CONF_HOME_ID = "home_id"
+# Optional override — set to a local mock server URL for development/testing
+CONF_API_BASE = "api_base"
 
 # ── Polling ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL_SECONDS = 30
