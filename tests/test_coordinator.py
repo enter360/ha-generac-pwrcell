@@ -47,8 +47,8 @@ def test_parse_homes_solar_aggregated(homes_response):
 
     # Two PVL devices: 2500 + 1800 = 4300 W
     assert result[SENSOR_SOLAR_POWER] == 4300.0
-    # Lifetime energy: 12_000_000 + 9_500_000 = 21_500_000 Wh
-    assert result[SENSOR_SOLAR_ENERGY] == 21_500_000.0
+    # Lifetime energy: 12_000_000 + 9_500_000 = 21_500_000 Wh → 21_500 kWh
+    assert result[SENSOR_SOLAR_ENERGY] == 21_500.0
 
 
 def test_parse_homes_battery(homes_response):
@@ -56,7 +56,7 @@ def test_parse_homes_battery(homes_response):
 
     assert result[SENSOR_BATTERY_POWER] == -500.0
     assert result[SENSOR_BATTERY_SOC] == 85.0
-    assert result[SENSOR_BATTERY_ENERGY] == 5_000_000.0
+    assert result[SENSOR_BATTERY_ENERGY] == 5_000.0  # 5_000_000 Wh → 5_000 kWh
     assert result[SENSOR_BATTERY_TEMP] == 25.0
     assert result[SENSOR_BATTERY_VOLTAGE] == 48.0
 
@@ -65,7 +65,7 @@ def test_parse_homes_inverter(homes_response):
     result = _parse_homes(homes_response[0])
 
     assert result[SENSOR_INVERTER_POWER] == 3800.0
-    assert result[SENSOR_INVERTER_ENERGY] == 18_000_000.0
+    assert result[SENSOR_INVERTER_ENERGY] == 18_000.0  # 18_000_000 Wh → 18_000 kWh
     assert result[SENSOR_INVERTER_TEMP] == 35.0
     assert result[SENSOR_INVERTER_VOLTAGE] == 240.0
 

@@ -169,35 +169,37 @@ def _parse_homes(home: dict) -> dict[str, Any]:
                 inverter_status = status
 
     # ── Solar (sum across all PVL optimizers) ─────────────────────────────────
-    solar_w  = float(sum(d.get("powerInWatts", 0) for d in pvl_devices))
-    solar_wh = float(sum(d.get("lifeTimeEnergyInWh", 0) for d in pvl_devices))
+    solar_w   = float(sum(d.get("powerInWatts", 0) for d in pvl_devices))
+    solar_kwh = float(sum(d.get("lifeTimeEnergyInWh", 0) for d in pvl_devices)) / 1000.0
 
     # ── Battery ───────────────────────────────────────────────────────────────
     batt_w       = _f(battery_status, "powerInWatts")
     batt_soc     = _f(battery_status, "soc")
-    batt_wh      = _f(battery_status, "lifeTimeEnergyInWh")
+    _batt_wh     = _f(battery_status, "lifeTimeEnergyInWh")
+    batt_kwh     = _batt_wh / 1000.0 if _batt_wh is not None else None
     batt_temp    = _f(battery_status, "temperatureInCelsius")
     batt_voltage = _f(battery_status, "voltage")
 
     # ── Inverter ──────────────────────────────────────────────────────────────
-    inv_w       = _f(inverter_status, "powerInWatts")
-    inv_wh      = _f(inverter_status, "lifeTimeEnergyInWh")
-    inv_temp    = _f(inverter_status, "temperatureInCelsius")
-    inv_voltage = _f(inverter_status, "voltage")
+    inv_w        = _f(inverter_status, "powerInWatts")
+    _inv_wh      = _f(inverter_status, "lifeTimeEnergyInWh")
+    inv_kwh      = _inv_wh / 1000.0 if _inv_wh is not None else None
+    inv_temp     = _f(inverter_status, "temperatureInCelsius")
+    inv_voltage  = _f(inverter_status, "voltage")
 
     return {
         # Solar
         SENSOR_SOLAR_POWER:    solar_w,
-        SENSOR_SOLAR_ENERGY:   solar_wh,
+        SENSOR_SOLAR_ENERGY:   solar_kwh,
         # Battery
         SENSOR_BATTERY_POWER:   batt_w,
         SENSOR_BATTERY_SOC:     batt_soc,
-        SENSOR_BATTERY_ENERGY:  batt_wh,
+        SENSOR_BATTERY_ENERGY:  batt_kwh,
         SENSOR_BATTERY_TEMP:    batt_temp,
         SENSOR_BATTERY_VOLTAGE: batt_voltage,
         # Inverter
         SENSOR_INVERTER_POWER:   inv_w,
-        SENSOR_INVERTER_ENERGY:  inv_wh,
+        SENSOR_INVERTER_ENERGY:  inv_kwh,
         SENSOR_INVERTER_TEMP:    inv_temp,
         SENSOR_INVERTER_VOLTAGE: inv_voltage,
         # Grid / consumption / status — filled in by telemetry

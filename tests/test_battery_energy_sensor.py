@@ -45,7 +45,7 @@ def _make_sensor(
     sensor.coordinator = coord
     sensor._source_key = source_key
     sensor._sign = sign
-    sensor._energy_wh = 0.0
+    sensor._energy_kwh = 0.0
     sensor._last_update_time = None
     sensor._attr_unique_id = f"{HOME_ID}_{unique_id_suffix}"
     sensor._attr_name = unique_id_suffix.replace("_", " ").title()
@@ -106,28 +106,28 @@ def test_discharge_accumulates_positive_power():
     sensor = _discharge(power_w=1000.0)
     sensor._last_update_time = time.monotonic() - 3600  # 1 h ago
     sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 1000.0) < 1.0
+    assert abs(sensor._energy_kwh - 1.0) < 0.001  # 1000 W × 1 h / 1000 = 1.0 kWh
 
 
 def test_charge_accumulates_negative_power():
     sensor = _charge(power_w=-500.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 500.0) < 1.0
+    assert abs(sensor._energy_kwh - 0.5) < 0.001  # 500 W × 1 h / 1000 = 0.5 kWh
 
 
 def test_discharge_ignores_charging():
     sensor = _discharge(power_w=-300.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 def test_charge_ignores_discharging():
     sensor = _charge(power_w=300.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 # ── Energy accumulation — grid & home ────────────────────────────────────────
@@ -137,28 +137,28 @@ def test_grid_import_accumulates():
     sensor = _grid_import(power_w=2000.0)
     sensor._last_update_time = time.monotonic() - 1800  # 30 min
     sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 1000.0) < 1.0  # 2000 W × 0.5 h
+    assert abs(sensor._energy_kwh - 1.0) < 0.001  # 2000 W × 0.5 h / 1000 = 1.0 kWh
 
 
 def test_grid_export_accumulates():
     sensor = _grid_export(power_w=1500.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 1500.0) < 1.0
+    assert abs(sensor._energy_kwh - 1.5) < 0.001  # 1500 W × 1 h / 1000 = 1.5 kWh
 
 
 def test_home_energy_accumulates():
     sensor = _home(power_w=3000.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 3000.0) < 1.0
+    assert abs(sensor._energy_kwh - 3.0) < 0.001  # 3000 W × 1 h / 1000 = 3.0 kWh
 
 
 def test_positive_sensor_ignores_zero():
     sensor = _grid_import(power_w=0.0)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 # ── General behaviour ─────────────────────────────────────────────────────────
@@ -169,21 +169,21 @@ def test_accumulation_is_additive():
     for _ in range(3):
         sensor._last_update_time = time.monotonic() - 1800
         sensor._handle_coordinator_update()
-    assert abs(sensor._energy_wh - 900.0) < 2.0  # 600 W × 0.5 h × 3
+    assert abs(sensor._energy_kwh - 0.9) < 0.002  # 600 W × 0.5 h / 1000 × 3 = 0.9 kWh
 
 
 def test_no_accumulation_before_first_timestamp():
     sensor = _discharge(power_w=5000.0)
     assert sensor._last_update_time is None
     sensor._handle_coordinator_update()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 def test_none_power_skipped():
     sensor = _discharge(power_w=None)
     sensor._last_update_time = time.monotonic() - 3600
     sensor._handle_coordinator_update()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 def test_writes_ha_state_on_every_update():
@@ -214,7 +214,7 @@ async def test_restores_previous_value():
 
     await sensor.async_added_to_hass()
 
-    assert sensor._energy_wh == 4321.5
+    assert sensor._energy_kwh == 4321.5
     assert sensor._last_update_time is not None
 
 
@@ -224,7 +224,7 @@ async def test_restore_none_defaults_to_zero():
     sensor.async_get_last_sensor_data = AsyncMock(return_value=None)
     sensor.coordinator.async_add_listener = MagicMock(return_value=lambda: None)
     await sensor.async_added_to_hass()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 @pytest.mark.asyncio
@@ -235,7 +235,7 @@ async def test_restore_corrupt_value_defaults_to_zero():
     sensor.async_get_last_sensor_data = AsyncMock(return_value=last)
     sensor.coordinator.async_add_listener = MagicMock(return_value=lambda: None)
     await sensor.async_added_to_hass()
-    assert sensor._energy_wh == 0.0
+    assert sensor._energy_kwh == 0.0
 
 
 # ── native_value ──────────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ async def test_restore_corrupt_value_defaults_to_zero():
 
 def test_native_value_rounded_to_2dp():
     sensor = _discharge()
-    sensor._energy_wh = 123.456789
+    sensor._energy_kwh = 123.456789
     assert sensor.native_value == 123.46
 
 
