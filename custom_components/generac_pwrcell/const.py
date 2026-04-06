@@ -63,11 +63,15 @@ SENSOR_HOME_ENERGY          = "home_energy"
 SENSOR_NET_POWER            = "net_power"
 
 # Battery — from homes → systemDevices (BATTERY)
-SENSOR_BATTERY_POWER        = "battery_power"
-SENSOR_BATTERY_SOC          = "battery_state_of_charge"
-SENSOR_BATTERY_ENERGY       = "battery_energy"
-SENSOR_BATTERY_TEMP         = "battery_temperature"
-SENSOR_BATTERY_VOLTAGE      = "battery_voltage"
+SENSOR_BATTERY_POWER            = "battery_power"
+SENSOR_BATTERY_SOC              = "battery_state_of_charge"
+SENSOR_BATTERY_ENERGY           = "battery_energy"
+SENSOR_BATTERY_TEMP             = "battery_temperature"
+SENSOR_BATTERY_VOLTAGE          = "battery_voltage"
+# Derived energy totals (integrated from battery_power in the sensor layer)
+# Separate charge / discharge counters required by the HA Energy Dashboard.
+SENSOR_BATTERY_CHARGE_ENERGY    = "battery_charge_energy"
+SENSOR_BATTERY_DISCHARGE_ENERGY = "battery_discharge_energy"
 
 # Inverter — from homes → systemDevices (INVERTER)
 SENSOR_INVERTER_POWER       = "inverter_power"
