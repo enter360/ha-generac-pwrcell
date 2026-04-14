@@ -280,3 +280,83 @@ async def test_async_update_data_auth_error_raises(monkeypatch):
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
     with pytest.raises(UpdateFailed):
         await coord._async_update_data()
+
+
+# ── Monotonic guard (solar lifetime energy) ───────────────────────────────────
+
+
+def _homes_with_solar(solar_wh: float) -> list[dict]:
+    """Minimal homes response with a single PVL device at the given lifetime Wh."""
+    return [
+        {
+            "homeId": "home-1",
+            "systems": [
+                {
+                    "serialNumber": "S1",
+                    "systemDevices": [
+                        {
+                            "deviceType": "PVL",
+                            "deviceStatus": {
+                                "powerInWatts": 1000.0,
+                                "lifeTimeEnergyInWh": solar_wh,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_solar_monotonic_guard_rejects_decrease(caplog):
+    """A lower API reading must be discarded; the previous value is preserved."""
+    import logging
+
+    hass = MagicMock()
+    auth = AsyncMock()
+
+    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord._last_solar_wh = 30_000_000.0  # simulate previously seen high value
+
+    auth.async_get = AsyncMock(return_value=_homes_with_solar(16_000_000.0))
+
+    with caplog.at_level(logging.WARNING, logger="custom_components.generac_pwrcell.coordinator"):
+        result = await coord._async_update_data()
+
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
+    assert coord._last_solar_wh == 30_000_000.0
+    assert "Solar lifetime energy decreased" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_solar_monotonic_guard_accepts_increase():
+    """A higher API reading must be accepted and the high-water mark updated."""
+    hass = MagicMock()
+    auth = AsyncMock()
+
+    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord._last_solar_wh = 30_000_000.0
+
+    auth.async_get = AsyncMock(return_value=_homes_with_solar(30_100_000.0))
+
+    result = await coord._async_update_data()
+
+    assert result[SENSOR_SOLAR_ENERGY] == 30_100_000.0
+    assert coord._last_solar_wh == 30_100_000.0
+
+
+@pytest.mark.asyncio
+async def test_solar_monotonic_guard_accepts_equal():
+    """An equal API reading (no new production) must pass through unchanged."""
+    hass = MagicMock()
+    auth = AsyncMock()
+
+    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord._last_solar_wh = 30_000_000.0
+
+    auth.async_get = AsyncMock(return_value=_homes_with_solar(30_000_000.0))
+
+    result = await coord._async_update_data()
+
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
