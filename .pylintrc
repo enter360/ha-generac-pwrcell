@@ -1,0 +1,9 @@
+[DESIGN]
+max-args=6
+max-locals=25
+max-attributes=10
+
+[MESSAGES CONTROL]
+disable=
+    missing-function-docstring,
+    broad-exception-caught,
