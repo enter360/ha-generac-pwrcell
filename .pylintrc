@@ -26,3 +26,6 @@ disable=
     use-implicit-booleaness-not-comparison,
     # pytest.raises imports inside test functions are a standard pattern
     import-outside-toplevel,
+    # pylint cannot infer @dataclass constructor fields on HA EntityDescription
+    # subclasses when homeassistant is installed — all flagged kwargs are valid
+    unexpected-keyword-arg,
