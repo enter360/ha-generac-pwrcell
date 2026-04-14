@@ -256,7 +256,6 @@ async def test_async_update_data_telemetry_failure_is_graceful(homes_response):
 
 @pytest.mark.asyncio
 async def test_async_update_data_empty_homes_raises():
-    from custom_components.generac_pwrcell.auth import AuthError
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
     hass = MagicMock()
@@ -269,7 +268,7 @@ async def test_async_update_data_empty_homes_raises():
 
 
 @pytest.mark.asyncio
-async def test_async_update_data_auth_error_raises(monkeypatch):
+async def test_async_update_data_auth_error_raises():
     from custom_components.generac_pwrcell.auth import AuthError
     from homeassistant.helpers.update_coordinator import UpdateFailed
 

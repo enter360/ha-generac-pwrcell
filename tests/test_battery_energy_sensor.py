@@ -41,7 +41,7 @@ def _make_sensor(
 ) -> PWRcellIntegratedEnergySensor:
     """Instantiate a sensor with HA super().__init__ bypassed."""
     coord = coordinator or _make_coord(power_w, source_key)
-    sensor = PWRcellIntegratedEnergySensor.__new__(PWRcellIntegratedEnergySensor)
+    sensor = PWRcellIntegratedEnergySensor.__new__(PWRcellIntegratedEnergySensor)  # pylint: disable=no-value-for-parameter
     sensor.coordinator = coord
     sensor._source_key = source_key
     sensor._sign = sign

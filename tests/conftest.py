@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import enum as _enum
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -120,7 +119,7 @@ class _CoordinatorEntity:
     """Minimal CoordinatorEntity stub."""
 
     # Allow CoordinatorEntity[SomeType] generic syntax used in sensor.py
-    def __class_getitem__(cls, item):
+    def __class_getitem__(cls, _item):
         return cls
 
     def __init__(self, coordinator):
@@ -201,7 +200,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def load_fixture(name: str):
-    with open(FIXTURES_DIR / name) as fh:
+    with open(FIXTURES_DIR / name, encoding="utf-8") as fh:
         return json.load(fh)
 
 
