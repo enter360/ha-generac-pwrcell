@@ -94,7 +94,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
 
         # Monotonic guard for lifetime energy counters — reject any reading that
         # decreases (inverter counter reset artifacts cause false accumulation in HA).
-        self._last_solar_wh: float = 0.0
+        self._last_solar_kwh: float = 0.0
 
     @property
     def home_id(self) -> str | None:
@@ -122,18 +122,18 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         # The inverter periodically reports a stale/reset counter value before
         # recovering to the true accumulated total; accepting these drops causes
         # HA long-term statistics to record false production spikes.
-        new_solar_wh: float | None = result.get(SENSOR_SOLAR_ENERGY)
-        if new_solar_wh is not None:
-            if new_solar_wh < self._last_solar_wh:
+        new_solar_kwh: float | None = result.get(SENSOR_SOLAR_ENERGY)
+        if new_solar_kwh is not None:
+            if new_solar_kwh < self._last_solar_kwh:
                 _LOGGER.warning(
-                    "Solar lifetime energy decreased %.0f Wh → %.0f Wh — "
+                    "Solar lifetime energy decreased %.3f kWh → %.3f kWh — "
                     "ignoring reading (likely inverter counter reset artifact)",
-                    self._last_solar_wh,
-                    new_solar_wh,
+                    self._last_solar_kwh,
+                    new_solar_kwh,
                 )
-                result[SENSOR_SOLAR_ENERGY] = self._last_solar_wh
+                result[SENSOR_SOLAR_ENERGY] = self._last_solar_kwh
             else:
-                self._last_solar_wh = new_solar_wh
+                self._last_solar_kwh = new_solar_kwh
 
         # --- Telemetry (aggregate power flow) ---
         # Schema is TBC; skip gracefully if it fails so the rest still works.

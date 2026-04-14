@@ -317,15 +317,16 @@ async def test_solar_monotonic_guard_rejects_decrease(caplog):
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0  # simulate previously seen high value
+    coord._last_solar_kwh = 30_000.0  # 30 MWh high-water mark in kWh
 
+    # API returns 16_000_000 Wh → 16_000 kWh (a drop)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(16_000_000.0))
 
     with caplog.at_level(logging.WARNING, logger="custom_components.generac_pwrcell.coordinator"):
         result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
-    assert coord._last_solar_wh == 30_000_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0
+    assert coord._last_solar_kwh == 30_000.0
     assert "Solar lifetime energy decreased" in caplog.text
 
 
@@ -336,14 +337,15 @@ async def test_solar_monotonic_guard_accepts_increase():
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0
+    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
 
+    # API returns 30_100_000 Wh → 30_100 kWh (an increase)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(30_100_000.0))
 
     result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_100_000.0
-    assert coord._last_solar_wh == 30_100_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_100.0
+    assert coord._last_solar_kwh == 30_100.0
 
 
 @pytest.mark.asyncio
@@ -353,10 +355,11 @@ async def test_solar_monotonic_guard_accepts_equal():
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0
+    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
 
+    # API returns 30_000_000 Wh → 30_000 kWh (same value, no change)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(30_000_000.0))
 
     result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0
