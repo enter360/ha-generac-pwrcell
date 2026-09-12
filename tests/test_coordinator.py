@@ -47,8 +47,8 @@ def test_parse_homes_solar_aggregated(homes_response):
 
     # Two PVL devices: 2500 + 1800 = 4300 W
     assert result[SENSOR_SOLAR_POWER] == 4300.0
-    # Lifetime energy: 12_000_000 + 9_500_000 = 21_500_000 Wh
-    assert result[SENSOR_SOLAR_ENERGY] == 21_500_000.0
+    # Lifetime energy: 12_000_000 + 9_500_000 = 21_500_000 Wh → 21_500 kWh
+    assert result[SENSOR_SOLAR_ENERGY] == 21_500.0
 
 
 def test_parse_homes_battery(homes_response):
@@ -56,7 +56,7 @@ def test_parse_homes_battery(homes_response):
 
     assert result[SENSOR_BATTERY_POWER] == -500.0
     assert result[SENSOR_BATTERY_SOC] == 85.0
-    assert result[SENSOR_BATTERY_ENERGY] == 5_000_000.0
+    assert result[SENSOR_BATTERY_ENERGY] == 5_000.0  # 5_000_000 Wh → 5_000 kWh
     assert result[SENSOR_BATTERY_TEMP] == 25.0
     assert result[SENSOR_BATTERY_VOLTAGE] == 48.0
 
@@ -65,7 +65,7 @@ def test_parse_homes_inverter(homes_response):
     result = _parse_homes(homes_response[0])
 
     assert result[SENSOR_INVERTER_POWER] == 3800.0
-    assert result[SENSOR_INVERTER_ENERGY] == 18_000_000.0
+    assert result[SENSOR_INVERTER_ENERGY] == 18_000.0  # 18_000_000 Wh → 18_000 kWh
     assert result[SENSOR_INVERTER_TEMP] == 35.0
     assert result[SENSOR_INVERTER_VOLTAGE] == 240.0
 
@@ -256,7 +256,6 @@ async def test_async_update_data_telemetry_failure_is_graceful(homes_response):
 
 @pytest.mark.asyncio
 async def test_async_update_data_empty_homes_raises():
-    from custom_components.generac_pwrcell.auth import AuthError
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
     hass = MagicMock()
@@ -269,7 +268,7 @@ async def test_async_update_data_empty_homes_raises():
 
 
 @pytest.mark.asyncio
-async def test_async_update_data_auth_error_raises(monkeypatch):
+async def test_async_update_data_auth_error_raises():
     from custom_components.generac_pwrcell.auth import AuthError
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -317,15 +316,16 @@ async def test_solar_monotonic_guard_rejects_decrease(caplog):
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0  # simulate previously seen high value
+    coord._last_solar_kwh = 30_000.0  # 30 MWh high-water mark in kWh
 
+    # API returns 16_000_000 Wh → 16_000 kWh (a drop)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(16_000_000.0))
 
     with caplog.at_level(logging.WARNING, logger="custom_components.generac_pwrcell.coordinator"):
         result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
-    assert coord._last_solar_wh == 30_000_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0
+    assert coord._last_solar_kwh == 30_000.0
     assert "Solar lifetime energy decreased" in caplog.text
 
 
@@ -336,14 +336,15 @@ async def test_solar_monotonic_guard_accepts_increase():
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0
+    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
 
+    # API returns 30_100_000 Wh → 30_100 kWh (an increase)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(30_100_000.0))
 
     result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_100_000.0
-    assert coord._last_solar_wh == 30_100_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_100.0
+    assert coord._last_solar_kwh == 30_100.0
 
 
 @pytest.mark.asyncio
@@ -353,10 +354,11 @@ async def test_solar_monotonic_guard_accepts_equal():
     auth = AsyncMock()
 
     coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_wh = 30_000_000.0
+    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
 
+    # API returns 30_000_000 Wh → 30_000 kWh (same value, no change)
     auth.async_get = AsyncMock(return_value=_homes_with_solar(30_000_000.0))
 
     result = await coord._async_update_data()
 
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000_000.0
+    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0

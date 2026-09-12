@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -166,7 +166,7 @@ async def test_refresh_failure_falls_back_to_signin():
 
     call_count = {"n": 0}
 
-    def _post_side_effect(*args, **kwargs):
+    def _post_side_effect(*_args, **_kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             # First call = refresh → fail

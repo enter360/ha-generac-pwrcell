@@ -94,7 +94,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
 
         # Monotonic guard for lifetime energy counters — reject any reading that
         # decreases (inverter counter reset artifacts cause false accumulation in HA).
-        self._last_solar_wh: float = 0.0
+        self._last_solar_kwh: float = 0.0
 
     @property
     def home_id(self) -> str | None:
@@ -122,18 +122,18 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         # The inverter periodically reports a stale/reset counter value before
         # recovering to the true accumulated total; accepting these drops causes
         # HA long-term statistics to record false production spikes.
-        new_solar_wh: float | None = result.get(SENSOR_SOLAR_ENERGY)
-        if new_solar_wh is not None:
-            if new_solar_wh < self._last_solar_wh:
+        new_solar_kwh: float | None = result.get(SENSOR_SOLAR_ENERGY)
+        if new_solar_kwh is not None:
+            if new_solar_kwh < self._last_solar_kwh:
                 _LOGGER.warning(
-                    "Solar lifetime energy decreased %.0f Wh → %.0f Wh — "
+                    "Solar lifetime energy decreased %.3f kWh → %.3f kWh — "
                     "ignoring reading (likely inverter counter reset artifact)",
-                    self._last_solar_wh,
-                    new_solar_wh,
+                    self._last_solar_kwh,
+                    new_solar_kwh,
                 )
-                result[SENSOR_SOLAR_ENERGY] = self._last_solar_wh
+                result[SENSOR_SOLAR_ENERGY] = self._last_solar_kwh
             else:
-                self._last_solar_wh = new_solar_wh
+                self._last_solar_kwh = new_solar_kwh
 
         # --- Telemetry (aggregate power flow) ---
         # Schema is TBC; skip gracefully if it fails so the rest still works.
@@ -190,35 +190,37 @@ def _parse_homes(home: dict) -> dict[str, Any]:
                 inverter_status = status
 
     # ── Solar (sum across all PVL optimizers) ─────────────────────────────────
-    solar_w  = float(sum(d.get("powerInWatts", 0) for d in pvl_devices))
-    solar_wh = float(sum(d.get("lifeTimeEnergyInWh", 0) for d in pvl_devices))
+    solar_w   = float(sum(d.get("powerInWatts", 0) for d in pvl_devices))
+    solar_kwh = float(sum(d.get("lifeTimeEnergyInWh", 0) for d in pvl_devices)) / 1000.0
 
     # ── Battery ───────────────────────────────────────────────────────────────
     batt_w       = _f(battery_status, "powerInWatts")
     batt_soc     = _f(battery_status, "soc")
-    batt_wh      = _f(battery_status, "lifeTimeEnergyInWh")
+    _batt_wh     = _f(battery_status, "lifeTimeEnergyInWh")
+    batt_kwh     = _batt_wh / 1000.0 if _batt_wh is not None else None
     batt_temp    = _f(battery_status, "temperatureInCelsius")
     batt_voltage = _f(battery_status, "voltage")
 
     # ── Inverter ──────────────────────────────────────────────────────────────
-    inv_w       = _f(inverter_status, "powerInWatts")
-    inv_wh      = _f(inverter_status, "lifeTimeEnergyInWh")
-    inv_temp    = _f(inverter_status, "temperatureInCelsius")
-    inv_voltage = _f(inverter_status, "voltage")
+    inv_w        = _f(inverter_status, "powerInWatts")
+    _inv_wh      = _f(inverter_status, "lifeTimeEnergyInWh")
+    inv_kwh      = _inv_wh / 1000.0 if _inv_wh is not None else None
+    inv_temp     = _f(inverter_status, "temperatureInCelsius")
+    inv_voltage  = _f(inverter_status, "voltage")
 
     return {
         # Solar
         SENSOR_SOLAR_POWER:    solar_w,
-        SENSOR_SOLAR_ENERGY:   solar_wh,
+        SENSOR_SOLAR_ENERGY:   solar_kwh,
         # Battery
         SENSOR_BATTERY_POWER:   batt_w,
         SENSOR_BATTERY_SOC:     batt_soc,
-        SENSOR_BATTERY_ENERGY:  batt_wh,
+        SENSOR_BATTERY_ENERGY:  batt_kwh,
         SENSOR_BATTERY_TEMP:    batt_temp,
         SENSOR_BATTERY_VOLTAGE: batt_voltage,
         # Inverter
         SENSOR_INVERTER_POWER:   inv_w,
-        SENSOR_INVERTER_ENERGY:  inv_wh,
+        SENSOR_INVERTER_ENERGY:  inv_kwh,
         SENSOR_INVERTER_TEMP:    inv_temp,
         SENSOR_INVERTER_VOLTAGE: inv_voltage,
         # Grid / consumption / status — filled in by telemetry

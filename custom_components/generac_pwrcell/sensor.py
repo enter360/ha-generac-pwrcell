@@ -82,8 +82,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         key="solar_energy",
         data_key=SENSOR_SOLAR_ENERGY,
         name="Solar Energy (lifetime)",
-        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
-        suggested_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:solar-power-variant",
@@ -117,8 +116,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         key="battery_energy",
         data_key=SENSOR_BATTERY_ENERGY,
         name="Battery Energy (lifetime)",
-        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
-        suggested_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:battery-arrow-up",
@@ -166,8 +164,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         key="inverter_energy",
         data_key=SENSOR_INVERTER_ENERGY,
         name="Inverter Energy (lifetime)",
-        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
-        suggested_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:counter",
@@ -382,7 +379,7 @@ class PWRcellSensor(CoordinatorEntity[PWRcellCoordinator], SensorEntity):
 
 
 class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], RestoreSensor):
-    """Integrates a power (W) reading into a cumulative energy (Wh) total.
+    """Integrates a power (W) reading into a cumulative energy (kWh) total.
 
     Used for sensors where the Generac API provides only instantaneous power,
     not a lifetime energy counter.  Covers:
@@ -400,8 +397,7 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
 
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
-    _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_suggested_display_precision = 2
     _attr_has_entity_name = True
 
@@ -419,7 +415,7 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
         super().__init__(coordinator)
         self._source_key = source_key
         self._sign = sign
-        self._energy_wh: float = 0.0
+        self._energy_kwh: float = 0.0
         self._last_update_time: float | None = None
 
         self._attr_unique_id = f"{home_id}_{unique_id_suffix}"
@@ -437,9 +433,9 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
         await super().async_added_to_hass()
         if (last := await self.async_get_last_sensor_data()) is not None:
             try:
-                self._energy_wh = float(last.native_value)
+                self._energy_kwh = float(last.native_value)
             except (TypeError, ValueError):
-                self._energy_wh = 0.0
+                self._energy_kwh = 0.0
         self._last_update_time = time.monotonic()
 
     @callback
@@ -453,16 +449,16 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
 
             if power_w is not None:
                 if self._sign == "positive" and power_w > 0:
-                    self._energy_wh += power_w * elapsed_h
+                    self._energy_kwh += power_w * elapsed_h / 1000.0
                 elif self._sign == "negative" and power_w < 0:
-                    self._energy_wh += abs(power_w) * elapsed_h
+                    self._energy_kwh += abs(power_w) * elapsed_h / 1000.0
 
         self._last_update_time = now
         self.async_write_ha_state()
 
     @property
     def native_value(self) -> float:
-        return round(self._energy_wh, 2)
+        return round(self._energy_kwh, 2)
 
     @property
     def available(self) -> bool:
