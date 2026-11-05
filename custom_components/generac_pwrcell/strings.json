@@ -12,16 +12,26 @@
         "data_description": {
           "api_base": "Leave as default unless you are running a local mock server for testing."
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Generac PWRcell",
+        "description": "The password for {email} no longer works. Enter the current password.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
       "invalid_auth": "Invalid credentials — check your email and password.",
       "cannot_connect": "Cannot reach the Generac API. Check your internet connection or API base URL.",
       "no_sensors": "Authenticated successfully, but no sensors were found on this account.",
-      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details.",
+      "invalid_api_base": "The API base URL must start with https:// (http:// is allowed only for localhost)."
     },
     "abort": {
-      "already_configured": "This PWRcell account is already configured."
+      "already_configured": "This PWRcell account is already configured.",
+      "reauth_successful": "Reauthentication successful.",
+      "unique_id_mismatch": "That is a different Generac account. Sign in with the original account."
     }
   }
 }

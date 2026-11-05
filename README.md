@@ -1,7 +1,7 @@
 # Generac PWRcell — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2023.1%2B-blue)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue)](https://www.home-assistant.io/)
 
 A Home Assistant custom integration for the **Generac PWRcell** solar + battery system. Pulls live data from the Generac cloud API using the same endpoints as the official PWRcell mobile app.
 
@@ -55,7 +55,7 @@ No local access required — the PWRview monitoring unit (a Raspberry Pi) locks 
 
 ## Requirements
 
-- Home Assistant 2023.1 or later
+- Home Assistant 2024.11 or later
 - A Generac PWRcell system with PWRview monitoring
 - A Generac account (the same email + password you use in the PWRcell mobile app)
 - Internet access from your HA instance
@@ -105,7 +105,7 @@ That's it. No API keys, no developer portal registration required.
 
 ## Home Assistant Energy Dashboard
 
-The integration exposes `TOTAL_INCREASING` lifetime energy sensors suitable for the HA Energy Dashboard. To configure:
+The lifetime sensors (solar, battery, inverter) use state class `total`, so a brief dip in a reading is not counted as a meter reset. Grid, home and battery charge/discharge energy are summed from every per-second telemetry sample (`total_increasing`), because the API gives only power for those. To configure:
 
 1. Go to **Settings → Dashboards → Energy**
 2. Add sources:
@@ -152,7 +152,7 @@ Authentication uses AWS Cognito under the hood. Tokens expire after 1 hour and a
 - Battery SOC and temperature always come from the homes endpoint and should always be available.
 
 **Token expired / re-authentication needed**
-- The integration refreshes tokens automatically. If refresh fails (e.g. after a password change), delete and re-add the integration.
+- The integration refreshes tokens automatically. If your password changed, Home Assistant shows a **Reauthenticate** prompt on the integration; enter the new password there (no need to delete it).
 
 ---
 

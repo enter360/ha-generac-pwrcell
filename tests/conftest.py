@@ -61,7 +61,8 @@ if str(REPO_ROOT) not in sys.path:
 class _DataUpdateCoordinator:
     """Minimal stub that satisfies PWRcellCoordinator's super().__init__ call."""
 
-    def __init__(self, hass, logger, *, name, update_interval):
+    def __init__(self, hass, logger, *, name, update_interval, config_entry=None):
+        self.config_entry = config_entry
         self.hass = hass
         self.logger = logger
         self.name = name
@@ -174,7 +175,15 @@ _coordinator_mod_full.DataUpdateCoordinator = _DataUpdateCoordinator
 _coordinator_mod_full.UpdateFailed = _UpdateFailed
 _coordinator_mod_full.CoordinatorEntity = _CoordinatorEntity
 
+class _ConfigEntryAuthFailed(Exception):
+    """Stub for homeassistant.exceptions.ConfigEntryAuthFailed."""
+
+
+_exceptions_mod = MagicMock()
+_exceptions_mod.ConfigEntryAuthFailed = _ConfigEntryAuthFailed
+
 _stubs: dict = {
+    "homeassistant.exceptions": _exceptions_mod,
     "homeassistant": MagicMock(),
     "homeassistant.core": _ha_core_mod,
     "homeassistant.helpers": MagicMock(),

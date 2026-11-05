@@ -36,6 +36,7 @@ import base64
 import logging
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -68,8 +69,37 @@ _APP_HEADERS = {
 }
 
 
+# Every request gets a timeout so one hung connection can't stall the coordinator.
+_TIMEOUT = aiohttp.ClientTimeout(total=20)
+
+# Statuses that mean "the credentials are wrong" rather than "try again later".
+_BAD_CREDENTIAL_STATUSES = (400, 401, 403)
+
+
 class AuthError(Exception):
-    """Raised on any authentication failure."""
+    """Raised on any authentication failure (network, server or credentials)."""
+
+
+class InvalidAuth(AuthError):
+    """Raised when the API rejects the credentials themselves."""
+
+
+def is_valid_api_base(url: str) -> bool:
+    """Accept https URLs, plus plain http only for a local mock server.
+
+    The password is sent to this URL, so never allow cleartext to a remote host.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return bool(parsed.hostname)
+    return parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")
+
+
+def _as_dict(body: Any, what: str) -> dict:
+    """Return body if it is a JSON object, else raise AuthError."""
+    if not isinstance(body, dict):
+        raise AuthError(f"{what}: unexpected response from server")
+    return body
 
 
 class GeneracAuth:
@@ -167,15 +197,18 @@ class GeneracAuth:
 
         try:
             async with self._session.post(
-                self._signin_url, headers=headers, json=payload
+                self._signin_url, headers=headers, json=payload, timeout=_TIMEOUT
             ) as resp:
-                body = await resp.json(content_type=None)
+                body = _as_dict(await resp.json(content_type=None), "Sign-in")
                 if resp.status != 200:
-                    raise AuthError(
+                    error_cls = (
+                        InvalidAuth if resp.status in _BAD_CREDENTIAL_STATUSES else AuthError
+                    )
+                    raise error_cls(
                         f"Sign-in failed ({resp.status}): "
                         f"{body.get('message', body.get('error', 'unknown'))}"
                     )
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise AuthError(f"Network error during sign-in: {exc}") from exc
 
         self._store_tokens(body)
@@ -197,15 +230,15 @@ class GeneracAuth:
 
         try:
             async with self._session.post(
-                self._refresh_url, headers=headers, json=payload
+                self._refresh_url, headers=headers, json=payload, timeout=_TIMEOUT
             ) as resp:
-                body = await resp.json(content_type=None)
+                body = _as_dict(await resp.json(content_type=None), "Token refresh")
                 if resp.status != 200:
                     raise AuthError(
                         f"Token refresh failed ({resp.status}): "
                         f"{body.get('message', body.get('error', 'unknown'))}"
                     )
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise AuthError(f"Network error during token refresh: {exc}") from exc
 
         self._store_tokens(body)
@@ -230,7 +263,7 @@ class GeneracAuth:
 
         try:
             async with self._session.request(
-                method, url, headers=headers, params=params, json=json
+                method, url, headers=headers, params=params, json=json, timeout=_TIMEOUT
             ) as resp:
                 if resp.status == 401:
                     # Force a fresh sign-in and retry once
@@ -238,9 +271,13 @@ class GeneracAuth:
                     self._access_token = None
                     self._refresh_token = None
                     await self._async_signin()
-                    headers["Authorization"] = f"Bearer {self._access_token}"
+                    # Data endpoints want the id_token; using the access token
+                    # here would fail the retry every time.
+                    retry_token = self._id_token if use_id_token else self._access_token
+                    headers["Authorization"] = f"Bearer {retry_token}"
                     async with self._session.request(
-                        method, url, headers=headers, params=params, json=json
+                        method, url, headers=headers, params=params, json=json,
+                        timeout=_TIMEOUT,
                     ) as resp2:
                         resp2.raise_for_status()
                         return await resp2.json(content_type=None)
@@ -250,7 +287,7 @@ class GeneracAuth:
 
         except aiohttp.ClientResponseError as exc:
             raise AuthError(f"API request to {url} returned {exc.status}") from exc
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise AuthError(f"Network error calling {url}: {exc}") from exc
 
     # ── Helpers ───────────────────────────────────────────────────────────────

@@ -21,10 +21,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .auth import AuthError, GeneracAuth
+from .auth import AuthError, GeneracAuth, InvalidAuth
 from .const import (
     DEFAULT_API_BASE,
     DEVICE_TYPE_BATTERY,
@@ -33,6 +35,8 @@ from .const import (
     DOMAIN,
     SCAN_INTERVAL_SECONDS,
     SENSOR_BATTERY_BACKUP_SECS,
+    SENSOR_BATTERY_CHARGE_ENERGY,
+    SENSOR_BATTERY_DISCHARGE_ENERGY,
     SENSOR_BATTERY_ENERGY,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_SOC,
@@ -61,6 +65,19 @@ _LOGGER = logging.getLogger(__name__)
 
 _TELEMETRY_LOOKBACK_SECONDS = 90
 
+# Telemetry samples further apart than this are treated as a gap, not
+# extrapolated: energy during an outage is lost rather than invented.
+_MAX_SAMPLE_GAP_SECONDS = 60
+
+# Energy counters integrated from telemetry power samples.
+_ENERGY_KEYS = (
+    SENSOR_GRID_IMPORT_ENERGY,
+    SENSOR_GRID_EXPORT_ENERGY,
+    SENSOR_HOME_ENERGY,
+    SENSOR_BATTERY_CHARGE_ENERGY,
+    SENSOR_BATTERY_DISCHARGE_ENERGY,
+)
+
 
 class PWRcellCoordinator(DataUpdateCoordinator):
     """Polls the Generac cloud API every 30 s and normalises device data."""
@@ -68,6 +85,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         hass: HomeAssistant,
+        config_entry: ConfigEntry | None,
         auth: GeneracAuth,
         user_id: str,
         home_id: str | None = None,
@@ -77,6 +95,7 @@ class PWRcellCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
+            config_entry=config_entry,
             update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS),
         )
         self.auth = auth
@@ -92,18 +111,29 @@ class PWRcellCoordinator(DataUpdateCoordinator):
         self.home_timezone: str = ""
         self.system_serial: str = ""
 
-        # Monotonic guard for lifetime energy counters — reject any reading that
-        # decreases (inverter counter reset artifacts cause false accumulation in HA).
-        self._last_solar_kwh: float = 0.0
+        # Energy (kWh) integrated from every telemetry sample, not once per poll.
+        # The sensors read these totals; they restore them on restart via seed_energy().
+        self.energy_kwh: dict[str, float] = dict.fromkeys(_ENERGY_KEYS, 0.0)
+        self._last_sample_ts: int | None = None
+        self._telemetry_ok = True
 
     @property
     def home_id(self) -> str | None:
         return self._home_id
 
+    def seed_energy(self, key: str, kwh: float) -> None:
+        """Add a restored total. Adds, because the first poll may already have counted."""
+        if key in self.energy_kwh and kwh > 0:
+            self.energy_kwh[key] += kwh
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch homes data and optional telemetry; return merged sensor values."""
         try:
             homes_raw = await self.auth.async_get(self._homes_url, use_id_token=True)
+        except InvalidAuth as exc:
+            # Stops polling and shows HA's "Reauthenticate" prompt instead of
+            # signing in with a bad password every 30 s (risks an account lockout).
+            raise ConfigEntryAuthFailed(str(exc)) from exc
         except AuthError as exc:
             raise UpdateFailed(f"Generac PWRcell homes fetch failed: {exc}") from exc
 
@@ -118,45 +148,88 @@ class PWRcellCoordinator(DataUpdateCoordinator):
 
         result = _parse_homes(home)
 
-        # Monotonic guard: solar lifetime energy must never decrease.
-        # The inverter periodically reports a stale/reset counter value before
-        # recovering to the true accumulated total; accepting these drops causes
-        # HA long-term statistics to record false production spikes.
-        new_solar_kwh: float | None = result.get(SENSOR_SOLAR_ENERGY)
-        if new_solar_kwh is not None:
-            if new_solar_kwh < self._last_solar_kwh:
-                _LOGGER.warning(
-                    "Solar lifetime energy decreased %.3f kWh → %.3f kWh — "
-                    "ignoring reading (likely inverter counter reset artifact)",
-                    self._last_solar_kwh,
-                    new_solar_kwh,
-                )
-                result[SENSOR_SOLAR_ENERGY] = self._last_solar_kwh
-            else:
-                self._last_solar_kwh = new_solar_kwh
+        # Lifetime energy sensors use state_class TOTAL, so HA adds the difference
+        # between readings. A dip from an offline optimizer followed by a recovery
+        # cancels out, and no guard is needed here.
 
         # --- Telemetry (aggregate power flow) ---
-        # Schema is TBC; skip gracefully if it fails so the rest still works.
+        # Skip gracefully if it fails so the homes data still works, but say so
+        # once when it starts failing and once when it recovers.
         if self._home_id:
             try:
                 telemetry_raw = await self._async_fetch_telemetry()
                 if telemetry_raw:
                     result.update(_parse_telemetry(telemetry_raw))
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug(
-                    "Telemetry fetch skipped (schema TBC or error): %s", exc
-                )
+                    self._integrate_energy(telemetry_raw)
+            except (AuthError, ValueError, KeyError, TypeError) as exc:
+                if self._telemetry_ok:
+                    _LOGGER.warning(
+                        "Generac telemetry unavailable, grid/home sensors will be "
+                        "unavailable until it recovers: %s", exc,
+                    )
+                self._telemetry_ok = False
+            else:
+                if not self._telemetry_ok:
+                    _LOGGER.info("Generac telemetry recovered")
+                self._telemetry_ok = True
 
+        result.update(self.energy_kwh)
         return result
 
     async def _async_fetch_telemetry(self) -> Any:
         url = self._telemetry_url_template.format(home_id=self._home_id)
-        from_iso = (
-            datetime.now(timezone.utc) - timedelta(seconds=_TELEMETRY_LOOKBACK_SECONDS)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from_ts = int(datetime.now(timezone.utc).timestamp()) - _TELEMETRY_LOOKBACK_SECONDS
+        # Start at the newest sample already counted, so polls don't re-download it.
+        if self._last_sample_ts is not None:
+            from_ts = max(from_ts, self._last_sample_ts)
+        from_iso = datetime.fromtimestamp(from_ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         return await self.auth.async_get(
             url, params={"fromIso": from_iso}, use_id_token=True
         )
+
+    def _integrate_energy(self, samples: Any) -> None:
+        """Add the energy of every telemetry sample not counted yet.
+
+        Telemetry is per-second but polls are 30 s apart, so integrating only the
+        latest reading per poll misses most of the data. Each sample is counted
+        once (by its own timestamp) over the time since the previous sample.
+        """
+        if not isinstance(samples, list):
+            return
+        for entry in sorted(
+            (e for e in samples if isinstance(e, dict) and "date" in e),
+            key=lambda e: int(e["date"]),
+        ):
+            ts = int(entry["date"])
+            if self._last_sample_ts is not None and ts <= self._last_sample_ts:
+                continue
+            if self._last_sample_ts is not None:
+                dt_s = min(ts - self._last_sample_ts, _MAX_SAMPLE_GAP_SECONDS)
+                for key, kwh in _sample_energy_kwh(entry, dt_s).items():
+                    self.energy_kwh[key] += kwh
+            self._last_sample_ts = ts
+
+
+def _sample_energy_kwh(entry: dict, dt_s: float) -> dict[str, float]:
+    """kWh moved by one telemetry sample held for dt_s seconds, split by direction."""
+
+    def kw(section: str) -> float | None:
+        sec = entry.get(section)
+        v = sec.get("powerKw") if isinstance(sec, dict) else None
+        return float(v) if v is not None else None
+
+    hours = dt_s / 3600.0
+    grid, home, battery = kw("grid"), kw("consumption"), kw("battery")
+    out: dict[str, float] = {}
+    if grid is not None:  # +ve = import, -ve = export
+        out[SENSOR_GRID_IMPORT_ENERGY] = max(grid, 0.0) * hours
+        out[SENSOR_GRID_EXPORT_ENERGY] = max(-grid, 0.0) * hours
+    if home is not None:
+        out[SENSOR_HOME_ENERGY] = max(home, 0.0) * hours
+    if battery is not None:  # +ve = discharging
+        out[SENSOR_BATTERY_DISCHARGE_ENERGY] = max(battery, 0.0) * hours
+        out[SENSOR_BATTERY_CHARGE_ENERGY] = max(-battery, 0.0) * hours
+    return out
 
 
 # ── Homes parsing (confirmed schema) ──────────────────────────────────────────
@@ -225,11 +298,8 @@ def _parse_homes(home: dict) -> dict[str, Any]:
         SENSOR_INVERTER_VOLTAGE: inv_voltage,
         # Grid / consumption / status — filled in by telemetry
         SENSOR_HOME_POWER:          None,
-        SENSOR_HOME_ENERGY:         None,
         SENSOR_GRID_IMPORT_POWER:   None,
-        SENSOR_GRID_IMPORT_ENERGY:  None,
         SENSOR_GRID_EXPORT_POWER:   None,
-        SENSOR_GRID_EXPORT_ENERGY:  None,
         SENSOR_NET_POWER:           None,
         SENSOR_BATTERY_STATE:       None,
         SENSOR_BATTERY_BACKUP_SECS: None,
