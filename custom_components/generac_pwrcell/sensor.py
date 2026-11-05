@@ -1,7 +1,6 @@
 """Sensor platform for Generac PWRcell."""
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +20,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -59,6 +58,9 @@ from .const import (
 )
 from .coordinator import PWRcellCoordinator
 
+# The coordinator serialises requests; entities only read its data.
+PARALLEL_UPDATES = 0
+
 
 @dataclass(frozen=True, kw_only=True)
 class PWRcellSensorDescription(SensorEntityDescription):
@@ -84,7 +86,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         name="Solar Energy (lifetime)",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:solar-power-variant",
         suggested_display_precision=2,
     ),
@@ -118,7 +120,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         name="Battery Energy (lifetime)",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:battery-arrow-up",
         suggested_display_precision=2,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -166,7 +168,7 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
         name="Inverter Energy (lifetime)",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:counter",
         suggested_display_precision=2,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -296,16 +298,15 @@ SENSOR_DESCRIPTIONS: tuple[PWRcellSensorDescription, ...] = (
     ),
 )
 
-# ── Integrated energy sensor definitions ──────────────────────────────────────
-# Each tuple: (source_power_key, unique_id_suffix, name, icon, sign)
-# sign = "positive" → integrate when power > 0
-# sign = "negative" → integrate abs(power) when power < 0
-_INTEGRATED_SENSORS: tuple[tuple[str, str, str, str, str], ...] = (
-    (SENSOR_GRID_IMPORT_POWER,  SENSOR_GRID_IMPORT_ENERGY,    "Grid Import Energy",    "mdi:transmission-tower-import",  "positive"),
-    (SENSOR_GRID_EXPORT_POWER,  SENSOR_GRID_EXPORT_ENERGY,    "Grid Export Energy",    "mdi:transmission-tower-export",  "positive"),
-    (SENSOR_HOME_POWER,         SENSOR_HOME_ENERGY,            "Home Energy",           "mdi:home-lightning-bolt-outline", "positive"),
-    (SENSOR_BATTERY_POWER,      SENSOR_BATTERY_DISCHARGE_ENERGY, "Battery Discharge Energy", "mdi:battery-arrow-up",   "positive"),
-    (SENSOR_BATTERY_POWER,      SENSOR_BATTERY_CHARGE_ENERGY,  "Battery Charge Energy", "mdi:battery-arrow-down",         "negative"),
+# ── Integrated energy sensors ─────────────────────────────────────────────────
+# (coordinator energy key, name, icon). The coordinator integrates every
+# telemetry sample; these entities only show and restore the totals.
+_INTEGRATED_SENSORS: tuple[tuple[str, str, str], ...] = (
+    (SENSOR_GRID_IMPORT_ENERGY,      "Grid Import Energy",      "mdi:transmission-tower-import"),
+    (SENSOR_GRID_EXPORT_ENERGY,      "Grid Export Energy",      "mdi:transmission-tower-export"),
+    (SENSOR_HOME_ENERGY,             "Home Energy",             "mdi:home-lightning-bolt-outline"),
+    (SENSOR_BATTERY_DISCHARGE_ENERGY, "Battery Discharge Energy", "mdi:battery-arrow-up"),
+    (SENSOR_BATTERY_CHARGE_ENERGY,   "Battery Charge Energy",   "mdi:battery-arrow-down"),
 )
 
 
@@ -315,7 +316,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Generac PWRcell sensors from a config entry."""
-    coordinator: PWRcellCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: PWRcellCoordinator = entry.runtime_data
     home_id: str = entry.data.get(CONF_HOME_ID, coordinator.home_id or "unknown")
 
     entities: list[SensorEntity] = [
@@ -325,13 +326,11 @@ async def async_setup_entry(
     entities += [
         PWRcellIntegratedEnergySensor(
             coordinator, home_id,
-            source_key=source_key,
-            unique_id_suffix=uid_suffix,
+            key=key,
             name=name,
             icon=icon,
-            sign=sign,
         )
-        for source_key, uid_suffix, name, icon, sign in _INTEGRATED_SENSORS
+        for key, name, icon in _INTEGRATED_SENSORS
     ]
     async_add_entities(entities)
 
@@ -379,24 +378,15 @@ class PWRcellSensor(CoordinatorEntity[PWRcellCoordinator], SensorEntity):
 
 
 class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], RestoreSensor):
-    """Integrates a power (W) reading into a cumulative energy (kWh) total.
+    """Shows an energy total (kWh) the coordinator integrates from telemetry.
 
-    Used for sensors where the Generac API provides only instantaneous power,
-    not a lifetime energy counter.  Covers:
-
-      • Grid Import Energy   — integrate grid_import_power (≥ 0 W)
-      • Grid Export Energy   — integrate grid_export_power (≥ 0 W)
-      • Home Energy          — integrate home_power (≥ 0 W)
-      • Battery Discharge    — integrate battery_power when > 0 W
-      • Battery Charge       — integrate abs(battery_power) when < 0 W
-
-    The running total is persisted via RestoreSensor so it survives HA restarts.
-    HA's long-term statistics engine records hourly/daily buckets automatically
-    once the sensor appears in the Energy Dashboard.
+    The API gives instantaneous power only for grid, home and battery charge /
+    discharge, so there is no lifetime counter to read. The total is restored
+    after a restart via RestoreSensor and handed back to the coordinator.
     """
 
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING  # only ever grows
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_suggested_display_precision = 2
     _attr_has_entity_name = True
@@ -406,19 +396,13 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
         coordinator: PWRcellCoordinator,
         home_id: str,
         *,
-        source_key: str,
-        unique_id_suffix: str,
+        key: str,
         name: str,
         icon: str,
-        sign: str,  # "positive" | "negative"
     ) -> None:
         super().__init__(coordinator)
-        self._source_key = source_key
-        self._sign = sign
-        self._energy_kwh: float = 0.0
-        self._last_update_time: float | None = None
-
-        self._attr_unique_id = f"{home_id}_{unique_id_suffix}"
+        self._key = key
+        self._attr_unique_id = f"{home_id}_{key}"
         self._attr_name = name
         self._attr_icon = icon
         self._attr_device_info = DeviceInfo(
@@ -429,36 +413,17 @@ class PWRcellIntegratedEnergySensor(CoordinatorEntity[PWRcellCoordinator], Resto
         )
 
     async def async_added_to_hass(self) -> None:
-        """Restore previous energy total and begin listening for updates."""
+        """Hand the previously saved total back to the coordinator."""
         await super().async_added_to_hass()
         if (last := await self.async_get_last_sensor_data()) is not None:
             try:
-                self._energy_kwh = float(last.native_value)
+                self.coordinator.seed_energy(self._key, float(last.native_value))
             except (TypeError, ValueError):
-                self._energy_kwh = 0.0
-        self._last_update_time = time.monotonic()
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Integrate power into energy on every coordinator poll."""
-        now = time.monotonic()
-
-        if self._last_update_time is not None and self.coordinator.data is not None:
-            elapsed_h = (now - self._last_update_time) / 3600.0
-            power_w: float | None = self.coordinator.data.get(self._source_key)
-
-            if power_w is not None:
-                if self._sign == "positive" and power_w > 0:
-                    self._energy_kwh += power_w * elapsed_h / 1000.0
-                elif self._sign == "negative" and power_w < 0:
-                    self._energy_kwh += abs(power_w) * elapsed_h / 1000.0
-
-        self._last_update_time = now
-        self.async_write_ha_state()
+                pass  # nothing usable saved; start from the coordinator's total
 
     @property
     def native_value(self) -> float:
-        return round(self._energy_kwh, 2)
+        return round(self.coordinator.energy_kwh[self._key], 2)
 
     @property
     def available(self) -> bool:

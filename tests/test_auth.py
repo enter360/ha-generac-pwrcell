@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.generac_pwrcell.auth import AuthError, GeneracAuth
+from custom_components.generac_pwrcell.auth import (
+    AuthError,
+    GeneracAuth,
+    InvalidAuth,
+    is_valid_api_base,
+)
 from custom_components.generac_pwrcell.const import DEFAULT_API_BASE
 
 MOCK_BASE = "http://localhost:8080"
@@ -239,3 +244,87 @@ def _make_post_ctx(status: int, data: dict):
     ctx.__aenter__ = AsyncMock(return_value=resp)
     ctx.__aexit__ = AsyncMock(return_value=False)
     return ctx
+
+
+# ── Credential errors, response shape, retry token, api_base ──────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 403])
+async def test_signin_bad_credentials_is_invalid_auth(status):
+    session, _, _ = _mock_session(post_status=status, post_json={"message": "nope"})
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    with pytest.raises(InvalidAuth):
+        await auth.async_get_access_token()
+
+
+@pytest.mark.asyncio
+async def test_signin_server_error_is_not_invalid_auth():
+    session, _, _ = _mock_session(post_status=503, post_json={"message": "down"})
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    with pytest.raises(AuthError) as exc:
+        await auth.async_get_access_token()
+    assert not isinstance(exc.value, InvalidAuth)
+
+
+@pytest.mark.asyncio
+async def test_signin_non_object_body_raises_auth_error():
+    session, _, _ = _mock_session(post_status=502, post_json=["<html>"])
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    with pytest.raises(AuthError):
+        await auth.async_get_access_token()
+
+
+@pytest.mark.asyncio
+async def test_signin_bad_json_raises_auth_error():
+    session, post_resp, _ = _mock_session()
+    post_resp.json = AsyncMock(side_effect=ValueError("not json"))
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    with pytest.raises(AuthError):
+        await auth.async_get_access_token()
+
+
+@pytest.mark.asyncio
+async def test_requests_pass_a_timeout():
+    session, _, _ = _mock_session()
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    await auth.async_get(f"{MOCK_BASE}/x", use_id_token=True)
+    assert session.post.call_args.kwargs["timeout"] is not None
+    assert session.request.call_args.kwargs["timeout"] is not None
+
+
+@pytest.mark.asyncio
+async def test_401_retry_on_data_endpoint_uses_id_token():
+    session, _, _ = _mock_session()
+    first_ctx = session.request.return_value
+    first_resp = first_ctx.__aenter__.return_value
+    first_resp.status = 401
+
+    retry_resp = AsyncMock()
+    retry_resp.status = 200
+    retry_resp.raise_for_status = MagicMock()
+    retry_resp.json = AsyncMock(return_value={"ok": True})
+    retry_ctx = AsyncMock()
+    retry_ctx.__aenter__ = AsyncMock(return_value=retry_resp)
+    retry_ctx.__aexit__ = AsyncMock(return_value=False)
+    session.request = MagicMock(side_effect=[first_ctx, retry_ctx])
+
+    auth = GeneracAuth(session, "a@b.com", "pw", api_base=MOCK_BASE)
+    assert await auth.async_get(f"{MOCK_BASE}/x", use_id_token=True) == {"ok": True}
+
+    retry_headers = session.request.call_args_list[1].kwargs["headers"]
+    assert retry_headers["Authorization"] == "Bearer id-tok-abc"
+
+
+@pytest.mark.parametrize("url,ok", [
+    ("https://generac-api.neur.io", True),
+    ("http://localhost:8080", True),
+    ("http://127.0.0.1:8080", True),
+    ("http://evil.example.com", False),
+    ("http://192.168.1.5:8080", False),
+    ("ftp://localhost", False),
+    ("https://", False),
+    ("not a url", False),
+])
+def test_is_valid_api_base(url, ok):
+    assert is_valid_api_base(url) is ok

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client
 
 from .auth import GeneracAuth
-from .const import CONF_API_BASE, CONF_USER_ID, DEFAULT_API_BASE, DOMAIN
+from .const import CONF_API_BASE, CONF_USER_ID, DEFAULT_API_BASE
 from .coordinator import PWRcellCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = PWRcellCoordinator(
         hass=hass,
+        config_entry=entry,
         auth=auth,
         user_id=entry.data[CONF_USER_ID],
         api_base=api_base,
@@ -39,13 +40,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # First refresh — fails fast on bad credentials / unreachable API
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

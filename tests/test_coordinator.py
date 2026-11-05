@@ -202,7 +202,7 @@ def test_fmt_address_empty():
 def test_coordinator_urls_use_custom_base():
     hass = MagicMock()
     auth = MagicMock()
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord = PWRcellCoordinator(hass, None, auth, "user-1", api_base=MOCK_BASE)
 
     assert coord._homes_url == f"{MOCK_BASE}/live/v1/homes"
     assert "live/v2/homes" in coord._telemetry_url_template
@@ -212,7 +212,7 @@ def test_coordinator_urls_use_custom_base():
 def test_coordinator_urls_default_to_production():
     hass = MagicMock()
     auth = MagicMock()
-    coord = PWRcellCoordinator(hass, auth, "user-1")
+    coord = PWRcellCoordinator(hass, None, auth, "user-1")
 
     assert coord._homes_url.startswith(DEFAULT_API_BASE)
     assert coord._telemetry_url_template.startswith(DEFAULT_API_BASE)
@@ -227,7 +227,7 @@ async def test_async_update_data_merges_homes_and_telemetry(homes_response, tele
     auth = AsyncMock()
     auth.async_get = AsyncMock(side_effect=[homes_response, telemetry_response])
 
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord = PWRcellCoordinator(hass, None, auth, "user-1", api_base=MOCK_BASE)
     result = await coord._async_update_data()
 
     # From homes: solar sum
@@ -240,11 +240,13 @@ async def test_async_update_data_merges_homes_and_telemetry(homes_response, tele
 @pytest.mark.asyncio
 async def test_async_update_data_telemetry_failure_is_graceful(homes_response):
     """If telemetry fetch fails, homes data is still returned."""
+    from custom_components.generac_pwrcell.auth import AuthError
+
     hass = MagicMock()
     auth = AsyncMock()
-    auth.async_get = AsyncMock(side_effect=[homes_response, Exception("timeout")])
+    auth.async_get = AsyncMock(side_effect=[homes_response, AuthError("timeout")])
 
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord = PWRcellCoordinator(hass, None, auth, "user-1", api_base=MOCK_BASE)
     result = await coord._async_update_data()
 
     # Homes data intact
@@ -255,6 +257,26 @@ async def test_async_update_data_telemetry_failure_is_graceful(homes_response):
 
 
 @pytest.mark.asyncio
+async def test_telemetry_failure_logged_once_then_recovery(homes_response, telemetry_response, caplog):
+    import logging
+
+    auth = AsyncMock()
+    boom = ValueError("schema changed")
+    auth.async_get = AsyncMock(side_effect=[
+        homes_response, boom, homes_response, boom, homes_response, telemetry_response,
+    ])
+    coord = PWRcellCoordinator(MagicMock(), None, auth, "user-1", api_base=MOCK_BASE)
+
+    with caplog.at_level(logging.INFO, logger="custom_components.generac_pwrcell.coordinator"):
+        await coord._async_update_data()
+        await coord._async_update_data()
+        await coord._async_update_data()
+
+    assert caplog.text.count("telemetry unavailable") == 1
+    assert caplog.text.count("telemetry recovered") == 1
+
+
+@pytest.mark.asyncio
 async def test_async_update_data_empty_homes_raises():
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -262,7 +284,7 @@ async def test_async_update_data_empty_homes_raises():
     auth = AsyncMock()
     auth.async_get = AsyncMock(return_value=[])
 
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord = PWRcellCoordinator(hass, None, auth, "user-1", api_base=MOCK_BASE)
     with pytest.raises(UpdateFailed):
         await coord._async_update_data()
 
@@ -276,89 +298,105 @@ async def test_async_update_data_auth_error_raises():
     auth = AsyncMock()
     auth.async_get = AsyncMock(side_effect=AuthError("bad token"))
 
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
+    coord = PWRcellCoordinator(hass, None, auth, "user-1", api_base=MOCK_BASE)
     with pytest.raises(UpdateFailed):
         await coord._async_update_data()
 
 
-# ── Monotonic guard (solar lifetime energy) ───────────────────────────────────
+@pytest.mark.asyncio
+async def test_invalid_auth_triggers_reauth():
+    from custom_components.generac_pwrcell.auth import InvalidAuth
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    auth = AsyncMock()
+    auth.async_get = AsyncMock(side_effect=InvalidAuth("bad password"))
+    coord = PWRcellCoordinator(MagicMock(), None, auth, "user-1", api_base=MOCK_BASE)
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord._async_update_data()
 
 
-def _homes_with_solar(solar_wh: float) -> list[dict]:
-    """Minimal homes response with a single PVL device at the given lifetime Wh."""
-    return [
-        {
-            "homeId": "home-1",
-            "systems": [
-                {
-                    "serialNumber": "S1",
-                    "systemDevices": [
-                        {
-                            "deviceType": "PVL",
-                            "deviceStatus": {
-                                "powerInWatts": 1000.0,
-                                "lifeTimeEnergyInWh": solar_wh,
-                            },
-                        }
-                    ],
-                }
-            ],
-        }
-    ]
+# ── Energy integration from telemetry samples ─────────────────────────────────
+
+from custom_components.generac_pwrcell.const import (  # noqa: E402
+    SENSOR_BATTERY_CHARGE_ENERGY,
+    SENSOR_BATTERY_DISCHARGE_ENERGY,
+    SENSOR_GRID_EXPORT_ENERGY,
+    SENSOR_GRID_IMPORT_ENERGY,
+    SENSOR_HOME_ENERGY,
+)
+
+
+def _coord():
+    return PWRcellCoordinator(MagicMock(), None, AsyncMock(), "user-1", api_base=MOCK_BASE)
+
+
+def _sample(ts, grid=0.0, home=0.0, battery=0.0):
+    return {
+        "date": str(ts),
+        "grid": {"powerKw": grid},
+        "consumption": {"powerKw": home},
+        "battery": {"powerKw": battery},
+    }
+
+
+def test_integrate_uses_every_sample_and_sample_timestamps():
+    coord = _coord()
+    # 1 kW grid import held for 3600 s, expressed as 120 samples 30 s apart.
+    coord._integrate_energy([_sample(1000 + 30 * n, grid=1.0) for n in range(121)])
+    assert abs(coord.energy_kwh[SENSOR_GRID_IMPORT_ENERGY] - 1.0) < 1e-9
+    assert coord.energy_kwh[SENSOR_GRID_EXPORT_ENERGY] == 0.0
+
+
+def test_integrate_counts_overlapping_samples_once():
+    coord = _coord()
+    first = [_sample(1000 + n, home=3.6) for n in range(11)]   # 10 s elapsed
+    coord._integrate_energy(first)
+    coord._integrate_energy(first + [_sample(1011 + n, home=3.6) for n in range(10)])
+    # 3.6 kW for 20 s = 0.02 kWh, however many times a sample is re-sent
+    assert abs(coord.energy_kwh[SENSOR_HOME_ENERGY] - 0.02) < 1e-9
+
+
+def test_integrate_splits_direction_by_sign():
+    coord = _coord()
+    coord._integrate_energy([
+        _sample(0, grid=-3.6, battery=-3.6),
+        _sample(10, grid=-3.6, battery=-3.6),   # export + charging
+        _sample(20, grid=3.6, battery=3.6),     # import + discharging
+    ])
+    assert abs(coord.energy_kwh[SENSOR_GRID_EXPORT_ENERGY] - 0.01) < 1e-9
+    assert abs(coord.energy_kwh[SENSOR_BATTERY_CHARGE_ENERGY] - 0.01) < 1e-9
+    assert abs(coord.energy_kwh[SENSOR_GRID_IMPORT_ENERGY] - 0.01) < 1e-9
+    assert abs(coord.energy_kwh[SENSOR_BATTERY_DISCHARGE_ENERGY] - 0.01) < 1e-9
+
+
+def test_integrate_caps_gaps_instead_of_extrapolating():
+    coord = _coord()
+    coord._integrate_energy([_sample(0, home=3.6), _sample(7200, home=3.6)])
+    # A 2 h gap counts as 60 s, not 2 h.
+    assert abs(coord.energy_kwh[SENSOR_HOME_ENERGY] - 0.06) < 1e-9
+
+
+def test_integrate_ignores_empty_and_bad_input():
+    coord = _coord()
+    coord._integrate_energy([])
+    coord._integrate_energy(None)
+    coord._integrate_energy(["x", {"no_date": 1}])
+    assert all(v == 0.0 for v in coord.energy_kwh.values())
+
+
+def test_seed_energy_adds_to_current_total():
+    coord = _coord()
+    coord.energy_kwh[SENSOR_HOME_ENERGY] = 0.5
+    coord.seed_energy(SENSOR_HOME_ENERGY, 100.0)
+    assert coord.energy_kwh[SENSOR_HOME_ENERGY] == 100.5
+    coord.seed_energy("not_a_counter", 5.0)   # unknown keys are ignored
 
 
 @pytest.mark.asyncio
-async def test_solar_monotonic_guard_rejects_decrease(caplog):
-    """A lower API reading must be discarded; the previous value is preserved."""
-    import logging
-
-    hass = MagicMock()
+async def test_update_data_exposes_energy_totals(homes_response, telemetry_response):
     auth = AsyncMock()
-
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_kwh = 30_000.0  # 30 MWh high-water mark in kWh
-
-    # API returns 16_000_000 Wh → 16_000 kWh (a drop)
-    auth.async_get = AsyncMock(return_value=_homes_with_solar(16_000_000.0))
-
-    with caplog.at_level(logging.WARNING, logger="custom_components.generac_pwrcell.coordinator"):
-        result = await coord._async_update_data()
-
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0
-    assert coord._last_solar_kwh == 30_000.0
-    assert "Solar lifetime energy decreased" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_solar_monotonic_guard_accepts_increase():
-    """A higher API reading must be accepted and the high-water mark updated."""
-    hass = MagicMock()
-    auth = AsyncMock()
-
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
-
-    # API returns 30_100_000 Wh → 30_100 kWh (an increase)
-    auth.async_get = AsyncMock(return_value=_homes_with_solar(30_100_000.0))
-
+    auth.async_get = AsyncMock(side_effect=[homes_response, telemetry_response])
+    coord = PWRcellCoordinator(MagicMock(), None, auth, "user-1", api_base=MOCK_BASE)
     result = await coord._async_update_data()
-
-    assert result[SENSOR_SOLAR_ENERGY] == 30_100.0
-    assert coord._last_solar_kwh == 30_100.0
-
-
-@pytest.mark.asyncio
-async def test_solar_monotonic_guard_accepts_equal():
-    """An equal API reading (no new production) must pass through unchanged."""
-    hass = MagicMock()
-    auth = AsyncMock()
-
-    coord = PWRcellCoordinator(hass, auth, "user-1", api_base=MOCK_BASE)
-    coord._last_solar_kwh = 30_000.0  # 30 MWh in kWh
-
-    # API returns 30_000_000 Wh → 30_000 kWh (same value, no change)
-    auth.async_get = AsyncMock(return_value=_homes_with_solar(30_000_000.0))
-
-    result = await coord._async_update_data()
-
-    assert result[SENSOR_SOLAR_ENERGY] == 30_000.0
+    # Two samples 60 s apart: the second (export 1.5 kW) counts for 60 s.
+    assert abs(result[SENSOR_GRID_EXPORT_ENERGY] - 1.5 * 60 / 3600) < 1e-9
